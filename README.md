@@ -1,90 +1,65 @@
-# claim — local gpt-oss + pi agent
+# claim — a self-hosted medical AI agent
 
-A [pi](https://pi.dev) coding agent backed by locally-served [gpt-oss](https://huggingface.co/openai/gpt-oss-120b) models, with two inference targets:
+An AI assistant for clinical information work that runs **entirely on hardware you control**. No patient data ever leaves your machine or network — there is no OpenAI account, no cloud API, no third party seeing the conversation.
 
-| Target | Model | Server | Where it runs |
+It is built from three open, swappable parts:
+
+```
+you chat with →  pi (the agent app)  →  gpt-oss (the medical brain)  →  your hardware
+                 open source            open model by OpenAI,           your Mac today,
+                                        strong on health benchmarks     a hospital server later
+```
+
+**Status: working today.** On a Mac it runs the smaller model (gpt-oss-20b) for development. The production setup (gpt-oss-120b — near-frontier on physician-graded health conversations, see [the research](docs/MEDICAL.md)) is ready in this repo and needs one GPU server to switch on.
+
+## Why self-hosted for medical
+
+- **Privacy is structural, not contractual.** With a cloud AI you sign agreements about patient data; here the data physically stays in the building. That's the difference that matters for HIPAA/GDPR.
+- **The model is genuinely good at health.** gpt-oss-120b scores near OpenAI's o3 on HealthBench (physician-rubric-graded medical conversations) — and it's free to run, Apache-licensed, and yours.
+- **It is not a doctor.** The model's own documentation says it "does not replace a medical professional and is not intended for the diagnosis or treatment of disease." Everything we build keeps a clinician in the loop. Details and limits: [docs/MEDICAL.md](docs/MEDICAL.md).
+
+## Try it (10 minutes if the model is already downloaded)
+
+Someone technical runs, on a Mac in this folder:
+
+```bash
+scripts/install-pi-config.sh   # one-time: register the local models
+scripts/serve-local.sh         # starts the model server (first run downloads ~12GB)
+pi                             # opens the chat — that's the agent
+```
+
+Then **anyone** can sit down and chat. Try: *"55-year-old on lisinopril reports a persistent dry cough — what should I consider?"* — and watch it follow the rules written in `AGENTS.md`.
+
+## How this becomes *your* medical agent
+
+The core idea: **the agent's medical behavior lives in [`AGENTS.md`](AGENTS.md) — a plain-English rulebook, no code.** The agent reads it at every start. The medical person owns that file.
+
+The working loop for the medical person:
+
+1. **Chat** with the agent about realistic cases
+2. **Spot** something wrong — tone, missing caveat, overconfidence, wrong escalation
+3. **Edit `AGENTS.md`** — add or sharpen a rule, in plain English
+4. Type `/reload` in the chat and try the case again
+
+That loop, repeated, is the product taking shape. No programming involved.
+
+## The build plan
+
+| Phase | What | Who | Done when |
 |---|---|---|---|
-| `local-llamacpp` | gpt-oss-20b (MXFP4, ~13GB) | llama.cpp (Metal) | This Mac, natively |
-| `sglang` | gpt-oss-120b (MXFP4, ~63GB) | SGLang (CUDA) | Linux box with ≥80GB NVIDIA VRAM, via Docker |
+| **0. Run it** | Get the quickstart working on one Mac, everyone has a first chat | developer | Whole team has talked to the agent |
+| **1. Teach it the rules** | Iterate `AGENTS.md` via the loop above; collect every tried case + expected behavior into `docs/test-cases.md` | **medical person** (leads) | ~30–50 test cases the agent handles acceptably |
+| **2. Encode workflows** | Turn recurring tasks (SOAP note drafting, discharge summaries, triage checklists, med reconciliation) into reusable "skills" — these are also plain-English markdown files (`.pi/skills/`); the medical person writes the checklist, a developer wires it in | medical person + developer | Each workflow invocable as `/skill:name` |
+| **3. Ground it in real sources** | Connect trusted references so answers cite rather than recall: your guideline documents, a drug-interaction database, PubMed lookup. This kills most hallucination risk. Built as pi "extensions" (TypeScript) | developer | Answers to test cases carry citations from your sources |
+| **4. Production** | Upgrade the brain to gpt-oss-120b on a GPU server (config already in this repo — `docker compose --profile gpu up`), on-premise for anything touching patient data; add login + encryption in front; compliance review (BAAs, EU AI Act/MDR classification) | developer + compliance | Pilot with real users on the 120b model |
 
-Both expose an OpenAI-compatible `/v1` API; pi is configured against both via `pi/models.json`, so switching is just `--provider`/`/model`.
+Deployment options, costs, HIPAA/EU-AI-Act facts, and why on-premise beats cloud hosting for the patient-data path: **[docs/MEDICAL.md](docs/MEDICAL.md)**.
 
-> Why two targets: SGLang has no Apple Silicon backend and gpt-oss-120b doesn't fit in 32GB unified memory. gpt-oss-20b runs great on an M-series Mac; the 120b compose stack is ready for the day this points at a GPU machine.
+## Ground rules during development
 
-## Quickstart (Mac, right now)
+- **No real patient data** in the system before Phase 4 infrastructure and sign-offs. Use realistic but invented cases.
+- The agent's answers are drafts for professional review — never patient-facing without a clinician's sign-off. This framing also keeps the project on the right side of medical-device regulation (see [docs/MEDICAL.md](docs/MEDICAL.md)).
 
-```bash
-# 1. Register the providers with pi (merges into ~/.pi/agent/models.json, keeps a .bak)
-scripts/install-pi-config.sh
+## For developers
 
-# 2. Serve gpt-oss-20b (installs llama.cpp via brew if needed; downloads ~12GB once)
-scripts/serve-local.sh
-
-# 3. In another terminal — run the agent
-pi --provider local-llamacpp --model gpt-oss-20b
-# or auto-detect hardware:
-scripts/agent.sh
-```
-
-This repo's `.pi/settings.json` also sets `local-llamacpp`/`gpt-oss-20b` as the default, so a plain `pi` in this directory works after step 1–2.
-
-## Chatting with the agent
-
-`llama-server` must be running first (`scripts/serve-local.sh` — instant once weights are cached; `scripts/agent.sh` checks this for you and picks the right backend).
-
-```bash
-pi                                  # interactive TUI (in this repo)
-pi -p "explain compose.yaml"        # one-shot / headless
-docker compose --profile local run --rm agent-local   # sandboxed TUI, repo at /workspace
-```
-
-In the TUI: type to chat, `@` fuzzy-references files, `!cmd` runs shell commands, `/model` switches models, Ctrl+C twice quits. First run in a directory asks you to trust its `.pi/settings.json`.
-
-## GPU box (gpt-oss-120b via SGLang)
-
-```bash
-cp .env.example .env   # set SGLANG_TP (1 for a single H100/H200, 4 for 4x smaller cards)
-docker compose --profile gpu up -d sglang        # first start downloads ~63GB
-docker compose --profile gpu run --rm agent      # pi against gpt-oss-120b
-```
-
-Requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). SGLang serves OpenAI-compatible endpoints on `:30000` (`/v1/chat/completions`, `/v1/responses`, `/health`) with the gpt-oss harmony reasoning/tool-call parsers enabled.
-
-## Dockerized agent on the Mac (optional)
-
-Runs pi in a container while llama.cpp serves natively on the host (Docker on macOS has no GPU access, so the model server stays on the host):
-
-```bash
-scripts/serve-local.sh                               # host terminal
-docker compose --profile local run --rm agent-local  # containerized pi
-```
-
-## Layout
-
-```
-compose.yaml                  # sglang + agent (profile: gpu), agent-local (profile: local)
-docker/agent/                 # pi agent image; config baked via PI_CODING_AGENT_DIR
-  Dockerfile                  # two config dirs: /opt/pi-config-{sglang,local}
-  models.docker.json          # same providers, container-network baseUrls
-  settings.sglang.json        # default provider for the gpu profile
-  settings.local.json         # default provider for the local profile
-pi/models.json                # source of truth for pi providers (host baseUrls)
-.pi/settings.json             # repo-level default provider/model for pi
-scripts/
-  serve-local.sh              # llama.cpp + gpt-oss-20b on the Mac
-  install-pi-config.sh        # merge pi/models.json into ~/.pi/agent/models.json
-  agent.sh                    # hardware auto-detect: sglang on NVIDIA, llama.cpp otherwise
-.env.example                  # SGLANG_TAG/TP/PORT, LLAMA_PORT/CTX, WORKSPACE
-```
-
-## Medical AI platform
-
-See [docs/MEDICAL.md](docs/MEDICAL.md) for how this stack extends into a medical agent platform (gpt-oss HealthBench results, pi customization layers, Railway vs on-premise deployment, HIPAA/EU-AI-Act headlines).
-
-## Notes
-
-- No API keys anywhere: gpt-oss weights are ungated (Apache 2.0) and both servers ignore auth; pi requires *some* `apiKey` value for custom providers, so a placeholder is set.
-- gpt-oss sampling guidance (from OpenAI): temperature 1.0, top_p 1.0, no repetition penalties. Reasoning effort maps to pi thinking levels (`low/medium/high`) on the SGLang provider; llama.cpp runs at the model default (medium).
-- Pin `SGLANG_TAG` to a release (e.g. `v0.5.12`) for reproducible deploys.
-- pi package: `@earendil-works/pi-coding-agent` (needs node ≥ 22.19).
-- Each compose agent service selects its provider via `PI_CODING_AGENT_DIR` (baked settings), not `command:` args — so `docker compose run agent-local <your args>` keeps the right model.
+Architecture, both deployment targets (Mac dev / GPU production), Docker usage, and all configuration: **[docs/SETUP.md](docs/SETUP.md)**.
