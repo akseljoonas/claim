@@ -1,0 +1,71 @@
+name: claim
+
+services:
+  # gpt-oss-120b model server — requires Linux + NVIDIA GPU(s) with ~80GB total VRAM.
+  # MXFP4 weights fit a single H100/H200 (--tp 1); set SGLANG_TP for multi-GPU.
+  sglang:
+    image: lmsysorg/sglang:${SGLANG_TAG:-latest}
+    profiles: ["gpu"]
+    command: >
+      python3 -m sglang.launch_server
+      --model-path ${SGLANG_MODEL:-openai/gpt-oss-120b}
+      --host 0.0.0.0 --port 30000
+      --reasoning-parser gpt-oss
+      --tool-call-parser gpt-oss
+      --tp ${SGLANG_TP:-1}
+    ports:
+      - "${SGLANG_PORT:-30000}:30000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    shm_size: "32gb"
+    ipc: host
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:30000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 45m # first start downloads ~63GB of weights
+
+  # pi agent wired to the SGLang service (GPU box).
+  # Run interactively: docker compose --profile gpu run --rm agent
+  agent:
+    build: ./docker/agent
+    profiles: ["gpu"]
+    depends_on:
+      sglang:
+        condition: service_healthy
+    environment:
+      PI_CODING_AGENT_DIR: /opt/pi-config-sglang
+    volumes:
+      - ${WORKSPACE:-.}:/workspace
+      - pi-sessions:/root/.pi-sessions
+    stdin_open: true
+    tty: true
+
+  # pi agent wired to llama.cpp + gpt-oss-20b running natively on the host
+  # (see scripts/serve-local.sh). For Macs / machines without NVIDIA GPUs.
+  # Run interactively: docker compose --profile local run --rm agent-local
+  agent-local:
+    build: ./docker/agent
+    profiles: ["local"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PI_CODING_AGENT_DIR: /opt/pi-config-local
+    volumes:
+      - ${WORKSPACE:-.}:/workspace
+      - pi-sessions:/root/.pi-sessions
+    stdin_open: true
+    tty: true
+
+volumes:
+  hf-cache:
+  pi-sessions:

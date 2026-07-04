@@ -1,0 +1,4 @@
+{
+  "defaultProvider": "local-llamacpp",
+  "defaultModel": "gpt-oss-20b"
+}

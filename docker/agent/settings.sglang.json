@@ -1,0 +1,4 @@
+{
+  "defaultProvider": "sglang",
+  "defaultModel": "openai/gpt-oss-120b"
+}
