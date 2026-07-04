@@ -34,14 +34,14 @@ Then **anyone** can sit down and chat. Try: *"55-year-old on lisinopril reports 
 
 The core idea: **the agent's medical behavior lives in [`AGENTS.md`](AGENTS.md) — a plain-English rulebook, no code.** The agent reads it at every start. The medical person owns that file.
 
-The working loop for the medical person:
+And here's the part that makes this fast: **you don't even have to edit the file yourself — the agent can edit its own rulebook when you tell it to in chat.** The working loop for the medical person:
 
 1. **Chat** with the agent about realistic cases
 2. **Spot** something wrong — tone, missing caveat, overconfidence, wrong escalation
-3. **Edit `AGENTS.md`** — add or sharpen a rule, in plain English
-4. Type `/reload` in the chat and try the case again
+3. **Tell it**: *"New permanent policy: … add this to your working instructions"* — the agent updates `AGENTS.md` itself (or edit the file by hand, it's plain English either way)
+4. Type `/reload` and try the case again; record it in [docs/test-cases.md](docs/test-cases.md)
 
-That loop, repeated, is the product taking shape. No programming involved.
+That loop, repeated, is the product taking shape. No programming involved. The same trick creates whole reusable workflows (`/skill:triage-note`). A real unedited session showing both — including a rule that took three iterations to stick — is written up in **[docs/SELF-BUILDING.md](docs/SELF-BUILDING.md)**. Every self-modification is a reviewable git diff, so nothing the agent does to itself is invisible or irreversible.
 
 ## The build plan
 
